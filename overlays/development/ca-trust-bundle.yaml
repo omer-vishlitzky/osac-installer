@@ -15,7 +15,7 @@
 #
 # This Bundle resource uses trust-manager to automatically sync the CA certificate
 # from the default-ca secret in cert-manager namespace to the ca-bundle ConfigMap
-# in all application namespaces. Trust-manager watches for changes to the CA and
+# in the overlay namespace. Trust-manager watches for changes to the CA and
 # updates all ConfigMaps automatically.
 
 apiVersion: trust.cert-manager.io/v1alpha1
@@ -31,7 +31,7 @@ spec:
   target:
     configMap:
       key: bundle.pem
-    # Sync to all namespaces except system namespaces
+    # Sync only to the overlay namespace
     namespaceSelector:
       matchExpressions:
       - key: kubernetes.io/metadata.name

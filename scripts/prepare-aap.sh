@@ -12,7 +12,7 @@ INSTALLER_NAMESPACE=${INSTALLER_NAMESPACE:-$(grep "^namespace:" "overlays/${INST
 [[ -z "${INSTALLER_NAMESPACE}" ]] && echo "ERROR: Could not determine namespace from overlays/${INSTALLER_KUSTOMIZE_OVERLAY}/kustomization.yaml" && exit 1
 
 # Get the AAP gateway route URL
-AAP_ROUTE_HOST=$(oc get routes -n ${INSTALLER_NAMESPACE} --no-headers | awk '$1 ~ /osac-aap/ {print $2; exit}')
+AAP_ROUTE_HOST=$(oc get routes -n "${INSTALLER_NAMESPACE}" --no-headers osac-aap -o jsonpath='{.spec.host}')
 AAP_URL="https://${AAP_ROUTE_HOST}"
 
 # Get the AAP admin password

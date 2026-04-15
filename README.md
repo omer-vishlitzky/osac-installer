@@ -458,14 +458,14 @@ $ oc extract secret/osac-aap-admin-password -n <project-name> --to -
 
 ### Create an AAP API Token for the OSAC Operator
 
-The OSAC operator requires an API token to communicate with AAP. The `scripts/create-aap-token.sh`
+The OSAC operator requires an API token to communicate with AAP. The `scripts/prepare-aap.sh`
 script automates this by authenticating with the AAP gateway using the admin password and
 creating a write-scoped token. The automated setup script (`setup.sh`) calls this automatically.
 
 For manual deployments, run it after the AAP bootstrap job completes:
 
 ```bash
-$ INSTALLER_NAMESPACE=<project-name> ./scripts/create-aap-token.sh
+$ INSTALLER_NAMESPACE=<project-name> ./scripts/prepare-aap.sh
 ```
 
 This script will:
