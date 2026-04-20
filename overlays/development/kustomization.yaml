@@ -47,6 +47,11 @@ secretGenerator:
     - AAP_PROJECT_GIT_URI="https://github.com/osac-project/osac-aap"
     - AAP_PROJECT_GIT_BRANCH=main
 
+- name: cluster-fulfillment-ig
+  options:
+    labels:
+      osac.openshift.io/project: osac-aap
+
 - name: publish-templates-ig
   literals:
     - OSAC_TEMPLATE_COLLECTIONS=osac.templates,osac.massopencloud
