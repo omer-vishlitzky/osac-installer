@@ -158,20 +158,36 @@ if [[ "${VIRT_SERVICE}" == "true" ]]; then
 fi
 
 # Apply cert-manager prerequisites and wait for it to be ready
-retry_until 300 3 '[[ -n "$(oc get crd --ignore-not-found certmanagers.operator.openshift.io)" ]]' 'oc apply -k prerequisites/cert-manager || true' || {
-    echo "Timed out waiting for cert-manager CRD to exist"
-    exit 1
-}
-wait_for_resource deployment/cert-manager condition=Available 300 cert-manager
-wait_for_resource deployment/cert-manager-webhook condition=Available 300 cert-manager
-wait_for_resource deployment/cert-manager-cainjector condition=Available 300 cert-manager
+CERT_MANAGER_NS=""
+if oc get deployment cert-manager -n cert-manager &>/dev/null; then
+    CERT_MANAGER_NS="cert-manager"
+elif oc get deployment cert-manager -n openshift-operators &>/dev/null; then
+    CERT_MANAGER_NS="openshift-operators"
+fi
+
+if [[ -n "${CERT_MANAGER_NS}" ]]; then
+    echo "cert-manager is already installed in ${CERT_MANAGER_NS}, skipping..."
+else
+    CERT_MANAGER_NS="cert-manager"
+    retry_until 300 3 '[[ -n "$(oc get crd --ignore-not-found certmanagers.operator.openshift.io)" ]]' 'oc apply -k prerequisites/cert-manager || true' || {
+        echo "Timed out waiting for cert-manager CRD to exist"
+        exit 1
+    }
+fi
+wait_for_resource deployment/cert-manager condition=Available 300 ${CERT_MANAGER_NS}
+wait_for_resource deployment/cert-manager-webhook condition=Available 300 ${CERT_MANAGER_NS}
+wait_for_resource deployment/cert-manager-cainjector condition=Available 300 ${CERT_MANAGER_NS}
 
 # Apply trust-manager prerequisites and wait for it to be ready
-retry_until 60 5 'oc apply -f prerequisites/trust-manager.yaml 2>/dev/null' || {
-    echo "Failed to apply trust-manager prerequisites"
-    exit 1
-}
-wait_for_resource deployment/trust-manager condition=Available 300 cert-manager
+if oc get deployment trust-manager -n ${CERT_MANAGER_NS} &>/dev/null; then
+    echo "trust-manager is already installed in ${CERT_MANAGER_NS}, skipping..."
+else
+    retry_until 60 5 'oc apply -f prerequisites/trust-manager.yaml 2>/dev/null' || {
+        echo "Failed to apply trust-manager prerequisites"
+        exit 1
+    }
+fi
+wait_for_resource deployment/trust-manager condition=Available 300 ${CERT_MANAGER_NS}
 
 # Apply CA issuer prerequisites and wait for it to be ready
 retry_until 60 5 'oc apply -f prerequisites/ca-issuer.yaml 2>/dev/null' || {
@@ -181,30 +197,58 @@ retry_until 60 5 'oc apply -f prerequisites/ca-issuer.yaml 2>/dev/null' || {
 wait_for_resource clusterissuer/default-ca condition=Ready 300
 
 # Apply authorino prerequisites and wait for it to be ready
-oc apply -f prerequisites/authorino-operator.yaml
-retry_until 300 3 '[[ -n "$(oc get csv --no-headers -n openshift-operators | grep authorino)" ]]' 'oc apply -f prerequisites/authorino-operator.yaml || true' || {
-    echo "Timed out waiting for authorino CSV to exist"
-    exit 1
-}
+if oc get deployment authorino-operator -n openshift-operators &>/dev/null; then
+    echo "Authorino operator is already installed, skipping..."
+else
+    oc apply -f prerequisites/authorino-operator.yaml
+    retry_until 300 3 '[[ -n "$(oc get csv --no-headers -n openshift-operators | grep authorino)" ]]' 'oc apply -f prerequisites/authorino-operator.yaml || true' || {
+        echo "Timed out waiting for authorino CSV to exist"
+        exit 1
+    }
+fi
 AUTHORINO_CSV=$(oc get csv --no-headers -n openshift-operators | awk '/authorino/ { print $1 }' | tail -1)
 wait_for_resource clusterserviceversion/${AUTHORINO_CSV} jsonpath='{.status.phase}'=Succeeded 300 openshift-operators
 wait_for_resource deployment/authorino-operator condition=Available 300 openshift-operators
 
 # Apply keycloak prerequisites and wait for it to be ready
-wait_for_namespace_cleanup keycloak
-oc apply -k prerequisites/keycloak/
-wait_for_resource deployment/keycloak-service condition=Available 600 keycloak
+KEYCLOAK_NS=""
+if oc get deployment keycloak-service -n keycloak &>/dev/null; then
+    KEYCLOAK_NS="keycloak"
+elif oc get deployment keycloak-service -n openshift-operators &>/dev/null; then
+    KEYCLOAK_NS="openshift-operators"
+fi
+
+if [[ -n "${KEYCLOAK_NS}" ]]; then
+    echo "Keycloak is already installed in ${KEYCLOAK_NS}, skipping..."
+else
+    KEYCLOAK_NS="keycloak"
+    wait_for_namespace_cleanup keycloak
+    oc apply -k prerequisites/keycloak/
+fi
+wait_for_resource deployment/keycloak-service condition=Available 600 ${KEYCLOAK_NS}
 
 # Apply AAP prerequisites and wait for it to be ready
-wait_for_namespace_cleanup ansible-aap
-oc apply -f prerequisites/aap-installation.yaml
-retry_until 300 3 '[[ -n "$(oc get csv --no-headers -n ansible-aap | grep aap)" ]]' 'oc apply -f prerequisites/aap-installation.yaml || true' || {
-    echo "Timed out waiting for AAP CSV to exist"
-    exit 1
-}
-AAP_CSV=$(oc get csv --no-headers -n ansible-aap | awk '/aap/ { print $1 }' | tail -1)
-wait_for_resource clusterserviceversion/${AAP_CSV} jsonpath='{.status.phase}'=Succeeded 300 ansible-aap
-wait_for_resource deployment/automation-controller-operator-controller-manager condition=Available 300 ansible-aap
+AAP_NS=""
+if oc get deployment automation-controller-operator-controller-manager -n ansible-aap &>/dev/null; then
+    AAP_NS="ansible-aap"
+elif oc get deployment automation-controller-operator-controller-manager -n openshift-operators &>/dev/null; then
+    AAP_NS="openshift-operators"
+fi
+
+if [[ -n "${AAP_NS}" ]]; then
+    echo "AAP operator is already installed in ${AAP_NS}, skipping..."
+else
+    AAP_NS="ansible-aap"
+    wait_for_namespace_cleanup ansible-aap
+    oc apply -f prerequisites/aap-installation.yaml
+    retry_until 300 3 '[[ -n "$(oc get csv --no-headers -n ansible-aap | grep aap)" ]]' 'oc apply -f prerequisites/aap-installation.yaml || true' || {
+        echo "Timed out waiting for AAP CSV to exist"
+        exit 1
+    }
+fi
+AAP_CSV=$(oc get csv --no-headers -n ${AAP_NS} | awk '/aap/ { print $1 }' | tail -1)
+wait_for_resource clusterserviceversion/${AAP_CSV} jsonpath='{.status.phase}'=Succeeded 300 ${AAP_NS}
+wait_for_resource deployment/automation-controller-operator-controller-manager condition=Available 300 ${AAP_NS}
 
 # Wait for OSAC namespace to finish terminating if needed
 wait_for_namespace_cleanup "${INSTALLER_NAMESPACE}"
