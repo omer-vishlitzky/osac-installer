@@ -37,6 +37,36 @@ for submodule in osac-operator osac-fulfillment-service osac-aap; do
   fi
 done
 
+aap_commit=$(git -C "${REPO_ROOT}" submodule status "base/osac-aap" | awk '{print $1}' | tr -d '+')
+aap_short="${aap_commit:0:7}"
+aap_tag="sha-${aap_short}"
+
+CI_OVERLAYS=("vmaas-ci" "caas-ci")
+
+for overlay in "${CI_OVERLAYS[@]}"; do
+  overlay_file="${REPO_ROOT}/overlays/${overlay}/kustomization.yaml"
+  [[ ! -f "${overlay_file}" ]] && continue
+
+  current_ee=$(grep "AAP_EE_IMAGE=" "${overlay_file}" | sed 's/.*AAP_EE_IMAGE=//' | tr -d ' ')
+  expected_ee="ghcr.io/osac-project/osac-aap:${aap_tag}"
+
+  current_branch=$(grep "AAP_PROJECT_GIT_BRANCH=" "${overlay_file}" | sed 's/.*AAP_PROJECT_GIT_BRANCH=//' | tr -d ' ')
+  expected_branch="${aap_commit}"
+
+  for pair in "AAP_EE_IMAGE ${current_ee} ${expected_ee}" "AAP_PROJECT_GIT_BRANCH ${current_branch} ${expected_branch}"; do
+    read -r key current expected <<< "${pair}"
+    if [[ "${current}" == "${expected}" ]]; then
+      echo "${overlay} ${key}: OK"
+    elif [[ "${1:-}" == "--fix" ]]; then
+      sed -i "s|${key}=${current}|${key}=${expected}|" "${overlay_file}"
+      echo "${overlay} ${key}: FIXED ${current} -> ${expected}"
+    else
+      echo "${overlay} ${key}: MISMATCH current=${current} expected=${expected}"
+      errors=$((errors + 1))
+    fi
+  done
+done
+
 if [[ ${errors} -gt 0 ]]; then
   echo ""
   echo "Run '$0 --fix' to update the tags automatically."
