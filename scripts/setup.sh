@@ -243,6 +243,14 @@ wait_for_namespace_cleanup "${INSTALLER_NAMESPACE}"
 # Apply kustomize overlay
 oc apply -k overlays/${INSTALLER_KUSTOMIZE_OVERLAY}
 
+# Create fulfillment-controller OAuth credentials from the Keycloak realm config
+FC_CLIENT_SECRET=$(jq -r '.clients[] | select(.clientId == "fulfillment-controller") | .secret' prerequisites/keycloak/service/files/realm.json)
+oc create secret generic fulfillment-controller-credentials \
+    --from-literal=client-id=fulfillment-controller \
+    --from-literal=client-secret="${FC_CLIENT_SECRET}" \
+    -n ${INSTALLER_NAMESPACE} \
+    --dry-run=client -o yaml | oc apply -f -
+
 # Apply cluster-fulfillment-ig configmap/secret overrides from environment variables
 INSTALLER_NAMESPACE="${INSTALLER_NAMESPACE}" \
 INSTALLER_KUSTOMIZE_OVERLAY="${INSTALLER_KUSTOMIZE_OVERLAY}" \
@@ -254,6 +262,10 @@ wait_for_resource job/aap-bootstrap condition=complete 2400 ${INSTALLER_NAMESPAC
 
 # Wait for Authorino to be ready (gRPC auth depends on it)
 wait_for_resource deployment/authorino condition=Available 300 ${INSTALLER_NAMESPACE}
+
+# Wait for fulfillment stack to be ready before running prepare scripts
+wait_for_resource deployment/fulfillment-grpc-server condition=Available 300 ${INSTALLER_NAMESPACE}
+wait_for_resource deployment/fulfillment-ingress-proxy condition=Available 300 ${INSTALLER_NAMESPACE}
 
 # Update project context
 oc project ${INSTALLER_NAMESPACE}

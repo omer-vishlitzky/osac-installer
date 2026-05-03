@@ -31,7 +31,7 @@ patches:
               - name: OSAC_MINIMUM_REQUEST_INTERVAL
                 value: "2m"
               - name: OSAC_FULFILLMENT_SERVER_ADDRESS
-                value: fulfillment-api:8000
+                value: fulfillment-internal-api:8001
 
 secretGenerator:
   - name: config-as-code-ig
@@ -46,6 +46,7 @@ configMapGenerator:
       disableNameSuffixHash: true
     literals:
       - OSAC_TEMPLATE_COLLECTIONS=osac.templates,isaiahstapleton.ai_cluster_ansible
+      - OSAC_FULFILLMENT_SERVICE_URI=https://fulfillment-internal-api:8001
 
 images:
   - name: ghcr.io/osac-project/osac-operator

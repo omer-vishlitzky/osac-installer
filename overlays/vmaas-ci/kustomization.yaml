@@ -42,18 +42,20 @@ secretGenerator:
   options:
     disableNameSuffixHash: true
   literals:
-    - AAP_EE_IMAGE=ghcr.io/osac-project/osac-aap:sha-ffe8959
+    - AAP_EE_IMAGE=ghcr.io/osac-project/osac-aap:sha-6f5dbdd
     - AAP_PROJECT_GIT_URI=https://github.com/osac-project/osac-aap
-    - AAP_PROJECT_GIT_BRANCH=ffe89599749830427c5c3b765071b7355a0f14f3
+    - AAP_PROJECT_GIT_BRANCH=6f5dbddc7f0f269e1cc7c4787d468c54acf3271a
 
 - name: cluster-fulfillment-ig
   options:
     labels:
       osac.openshift.io/project: osac-aap
 
+configMapGenerator:
 - name: publish-templates-ig
   literals:
     - OSAC_TEMPLATE_COLLECTIONS=osac.templates,osac.massopencloud
+    - OSAC_FULFILLMENT_SERVICE_URI=https://fulfillment-internal-api:8001
 
 images:
   - name: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
@@ -72,6 +74,16 @@ patches:
             containers:
               - name: controller
                 imagePullPolicy: Always
+  - target:
+      kind: Deployment
+      name: fulfillment-controller
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/command/7
+        value: "--auth-issuer-url=https://keycloak.keycloak.svc.cluster.local/realms/osac"
+      - op: replace
+        path: /spec/template/spec/containers/0/command/11
+        value: "--idp-url=https://keycloak.keycloak.svc.cluster.local"
   - target:
       kind: Deployment
       name: osac-operator-controller-manager
@@ -114,7 +126,7 @@ patches:
         path: /spec/template/spec/containers/0/env/-
         value:
           name: OSAC_FULFILLMENT_SERVER_ADDRESS
-          value: fulfillment-api:8000
+          value: fulfillment-internal-api:8001
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
@@ -151,7 +163,7 @@ patches:
             jwt:
               issuerUrl: https://keycloak.keycloak.svc.cluster.local/realms/osac
         authorization:
-          fulfillment-api:
+          default:
             opa:
               rego: |
                 import future.keywords.in
@@ -162,6 +174,7 @@ patches:
                   "system:serviceaccount:osac-e2e-ci:controller",
                   "system:serviceaccount:osac-e2e-ci:template-publisher",
                   "system:serviceaccount:osac-e2e-ci:osac-operator-controller-manager",
+                  "service-account-fulfillment-controller",
                 }
 
                 # Get the gRPC method:

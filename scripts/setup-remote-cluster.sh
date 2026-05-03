@@ -63,6 +63,8 @@ spec:
 EOF
 echo "Waiting for LVMS CRD..."
 retry_until 180 5 "oc ${remote} get crd lvmclusters.lvm.topolvm.io 2>/dev/null" || { echo "Timed out waiting for LVMS CRD"; exit 1; }
+echo "Waiting for LVMS operator webhook..."
+retry_until 180 5 "oc ${remote} rollout status deployment/lvms-operator -n openshift-storage --timeout=5s 2>/dev/null" || { echo "Timed out waiting for LVMS operator"; exit 1; }
 
 cat <<EOF | oc ${remote} apply -f -
 apiVersion: lvm.topolvm.io/v1alpha1
