@@ -134,10 +134,14 @@ oc delete job -n "${INSTALLER_NAMESPACE}" --all --ignore-not-found
 oc apply -k "overlays/${INSTALLER_KUSTOMIZE_OVERLAY}"
 
 echo "[4/8] Waiting for fulfillment rollouts..."
+pids=()
 for deploy in fulfillment-controller fulfillment-grpc-server fulfillment-rest-gateway fulfillment-ingress-proxy; do
     oc rollout status "deploy/${deploy}" -n "${INSTALLER_NAMESPACE}" --timeout=300s &
+    pids+=($!)
 done
-wait
+failed=0
+for pid in "${pids[@]}"; do wait "${pid}" || failed=1; done
+if (( failed )); then echo "ERROR: Fulfillment rollout failed"; exit 1; fi
 
 echo "[5/8] Applying AAP configuration..."
 INSTALLER_NAMESPACE="${INSTALLER_NAMESPACE}" \
@@ -165,10 +169,14 @@ echo "[8/8] Restarting fulfillment pods and configuring tenant..."
 for deploy in fulfillment-controller fulfillment-grpc-server fulfillment-rest-gateway fulfillment-ingress-proxy; do
     oc rollout restart "deploy/${deploy}" -n "${INSTALLER_NAMESPACE}"
 done
+pids=()
 for deploy in fulfillment-controller fulfillment-grpc-server fulfillment-rest-gateway fulfillment-ingress-proxy; do
     oc rollout status "deploy/${deploy}" -n "${INSTALLER_NAMESPACE}" --timeout=300s &
+    pids+=($!)
 done
-wait
+failed=0
+for pid in "${pids[@]}"; do wait "${pid}" || failed=1; done
+if (( failed )); then echo "ERROR: Fulfillment rollout failed after restart"; exit 1; fi
 ./scripts/prepare-tenant.sh
 
 echo ""
