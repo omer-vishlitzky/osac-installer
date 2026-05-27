@@ -253,6 +253,27 @@ wait_aap_controller() {
         echo "Timed out waiting for AAP gateway API to respond"
         exit 1
     }
+    # The AAP operator in ansible-aap/ crash-loops after recert, then
+    # reconciles the AutomationController CR when it recovers. Each
+    # reconciliation with changes rolls the controller-task deployment.
+    # Wait for the operator and its rollout to finish before we touch
+    # controller-task, otherwise the operator rolls it again after us.
+    echo "[6/8] Waiting for AAP operator reconciliation to converge..."
+    if oc get namespace ansible-aap &>/dev/null; then
+        oc rollout status deploy/automation-controller-operator-controller-manager \
+            -n ansible-aap --timeout=300s || true
+    fi
+    oc rollout status deploy/osac-aap-controller-task \
+        -n "${INSTALLER_NAMESPACE}" --timeout=300s
+    # Recycle the controller-task pod for fresh post-recert connections.
+    echo "[6/8] Recycling AAP controller-task pod..."
+    oc delete pod -n "${INSTALLER_NAMESPACE}" -l app.kubernetes.io/name=osac-aap-controller-task
+    oc wait pod -n "${INSTALLER_NAMESPACE}" -l app.kubernetes.io/name=osac-aap-controller-task \
+        --for=condition=Ready --timeout=300s
+    retry_until 120 5 '[[ "$(curl -sk -o /dev/null -w %{http_code} https://'"${AAP_ROUTE_HOST}"'/api/gateway/v1/)" == "200" ]]' || {
+        echo "Timed out waiting for AAP gateway after controller-task restart"
+        exit 1
+    }
     echo "[6/8] AAP controller Running, gateway responding"
 }
 
