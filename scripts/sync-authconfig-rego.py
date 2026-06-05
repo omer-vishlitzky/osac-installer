@@ -76,11 +76,11 @@ def build_overlay_rego(base_rego: str, namespace: str) -> str:
     rego = base_rego.replace("system:serviceaccount:osac:", f"system:serviceaccount:{namespace}:")
 
     extra = "\n".join(f'  "system:serviceaccount:{namespace}:{sa}",' for sa in EXTRA_EMERGENCY_SAS)
-    pattern = f'"system:serviceaccount:{namespace}:controller",\n}}'
+    pattern = f'"system:serviceaccount:{namespace}:admin",\n}}'
     if pattern not in rego:
         print(f"ERROR: injection point not found in base Rego. Base format may have changed.", file=sys.stderr)
         sys.exit(1)
-    rego = rego.replace(pattern, f'"system:serviceaccount:{namespace}:controller",\n{extra}\n}}')
+    rego = rego.replace(pattern, f'"system:serviceaccount:{namespace}:admin",\n{extra}\n}}')
     return rego
 
 
