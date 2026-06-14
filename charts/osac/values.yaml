@@ -118,6 +118,17 @@ bundledPostgres:
 hubAccess:
   enabled: true
 
+# --- Instance Groups ---
+# AAP instance group ConfigMaps/Secrets for cluster and network fulfillment.
+# The config map is a free-form key/value map; aap-configuration.sh can
+# patch additional values at runtime from environment files.
+instanceGroups:
+  enabled: true
+  cluster:
+    config: {}
+  network:
+    config: {}
+
 # --- Publish Templates ---
 publishTemplates:
   enabled: true

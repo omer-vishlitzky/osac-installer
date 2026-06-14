@@ -1,0 +1,15 @@
+dependencies:
+- name: osac-operator-crds
+  repository: file://../../base/osac-operator/charts/operator-crds
+  version: 0.0.0
+- name: osac-operator
+  repository: file://../../base/osac-operator/charts/operator
+  version: 0.0.0
+- name: fulfillment-service
+  repository: file://../../base/osac-fulfillment-service/charts/service
+  version: 0.0.0
+- name: osac-aap
+  repository: file://../../base/osac-aap/charts/aap
+  version: 0.0.0
+digest: sha256:a7868f354ce1f96aee3ea9bdf1b9ef15af816a9f9761293625ce79a0caa2d89d
+generated: "2026-06-13T00:03:52.489174676+03:00"

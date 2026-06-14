@@ -12,10 +12,11 @@ operator:
   aap:
     insecureSkipVerify: "true"
   fulfillment:
-    serverAddress: "fulfillment-api:8000"
+    serverAddress: "fulfillment-internal-api:8001"
     tokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
   controllers:
     clusterOrder: true
+    computeInstance: false
     tenant: true
     networking: true
 
@@ -85,6 +86,14 @@ aap:
   configAsCode:
     manifestSecret: "config-as-code-manifest-ig"
     secret: "config-as-code-ig"
+
+# --- Instance Groups ---
+instanceGroups:
+  cluster:
+    config:
+      NETWORK_STEPS_COLLECTION: "ci.steps"
+      HOSTED_CLUSTER_CONTROLLER_AVAILABILITY_POLICY: "SingleReplica"
+      HOSTED_CLUSTER_INFRASTRUCTURE_AVAILABILITY_POLICY: "SingleReplica"
 
 # --- Validation ---
 validation:

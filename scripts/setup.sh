@@ -11,7 +11,7 @@ source "${SCRIPT_DIR}/lib.sh"
 DEPLOY_MODE=${DEPLOY_MODE:-"helm"}
 
 INSTALLER_KUSTOMIZE_OVERLAY=${INSTALLER_KUSTOMIZE_OVERLAY:-"development"}
-VALUES_FILE=${VALUES_FILE:-"values/development.yaml"}
+VALUES_FILE=${VALUES_FILE:-"values/development/values.yaml"}
 
 if [[ "${DEPLOY_MODE}" == "kustomize" ]]; then
     INSTALLER_NAMESPACE=${INSTALLER_NAMESPACE:-$(grep "^namespace:" "overlays/${INSTALLER_KUSTOMIZE_OVERLAY}/kustomization.yaml" | awk '{print $2}')}
@@ -323,6 +323,28 @@ EOF
         -n "${INSTALLER_NAMESPACE}" \
         --dry-run=client -o yaml | oc apply -f -
 
+    # Create AAP config-as-code secrets required by the bootstrap hook.
+    VALUES_DIR="$(dirname "${VALUES_FILE}")"
+    AAP_LICENSE="${VALUES_DIR}/license.zip"
+    [[ -f "${AAP_LICENSE}" ]] || { echo "ERROR: AAP license not found: ${AAP_LICENSE}" >&2; exit 1; }
+
+    oc create secret generic config-as-code-manifest-ig \
+        --from-file=license.zip="${AAP_LICENSE}" \
+        -n "${INSTALLER_NAMESPACE}" \
+        --dry-run=client -o yaml | oc apply -f -
+    oc label secret config-as-code-manifest-ig \
+        osac.openshift.io/project=osac-aap \
+        -n "${INSTALLER_NAMESPACE}" --overwrite
+
+    AAP_COMMIT=$(git submodule status base/osac-aap | awk '{print $1}' | tr -d ' +-')
+    AAP_SHORT="${AAP_COMMIT:0:7}"
+    oc create secret generic config-as-code-ig \
+        --from-literal=AAP_EE_IMAGE="ghcr.io/osac-project/osac-aap:sha-${AAP_SHORT}" \
+        --from-literal=AAP_PROJECT_GIT_URI="https://github.com/osac-project/osac-aap" \
+        --from-literal=AAP_PROJECT_GIT_BRANCH="${AAP_COMMIT}" \
+        -n "${INSTALLER_NAMESPACE}" \
+        --dry-run=client -o yaml | oc apply -f -
+
     echo "Deploying OSAC using Helm..."
     helm dependency build charts/osac/
     helm upgrade --install osac charts/osac/ \
@@ -330,6 +352,16 @@ EOF
         --values "${VALUES_FILE}" \
         --timeout 40m \
         --wait
+
+    # TODO: Remove once the fulfillment-service subchart creates the internal
+    # route unconditionally on OpenShift (currently gated on internalHostname).
+    if ! oc get route fulfillment-internal-api -n "${INSTALLER_NAMESPACE}" &>/dev/null; then
+        echo "Creating fulfillment-internal-api route..."
+        oc create route passthrough fulfillment-internal-api \
+            --service=fulfillment-internal-api \
+            --port=internal-api \
+            -n "${INSTALLER_NAMESPACE}"
+    fi
 else
     # --- Kustomize deployment mode (legacy) ---
     echo "Deploying OSAC using Kustomize..."
@@ -348,19 +380,30 @@ else
         --dry-run=client -o yaml | oc apply -f -
 fi
 
-# Apply cluster-fulfillment-ig configmap/secret overrides from environment variables
-INSTALLER_NAMESPACE="${INSTALLER_NAMESPACE}" \
-INSTALLER_KUSTOMIZE_OVERLAY="${INSTALLER_KUSTOMIZE_OVERLAY}" \
-    ./scripts/aap-configuration.sh
-
-# Detect console-proxy namespace (shared-dev pins it to "osac")
-if grep -q 'console-proxy-shared-dev' \
-    "overlays/${INSTALLER_KUSTOMIZE_OVERLAY}/kustomization.yaml" 2>/dev/null; then
-  CONSOLE_PROXY_NS="osac"
+# Apply cluster-fulfillment-ig configmap/secret overrides from environment variables.
+if [[ "${DEPLOY_MODE}" == "helm" ]]; then
+    AAP_FILES_DIR="$(dirname "${VALUES_FILE}")" \
+    INSTALLER_NAMESPACE="${INSTALLER_NAMESPACE}" \
+        ./scripts/aap-configuration.sh
 else
-  CONSOLE_PROXY_NS="${INSTALLER_NAMESPACE}"
+    INSTALLER_NAMESPACE="${INSTALLER_NAMESPACE}" \
+    INSTALLER_KUSTOMIZE_OVERLAY="${INSTALLER_KUSTOMIZE_OVERLAY}" \
+        ./scripts/aap-configuration.sh
 fi
-wait_for_resource deployment/osac-console-proxy condition=Available 300 "${CONSOLE_PROXY_NS}"
+
+if [[ "${DEPLOY_MODE}" == "helm" ]]; then
+    # Helm chart names the console-proxy "fulfillment-console-proxy"
+    wait_for_resource deployment/fulfillment-console-proxy condition=Available 300 "${INSTALLER_NAMESPACE}"
+else
+    # Detect console-proxy namespace (shared-dev pins it to "osac")
+    if grep -q 'console-proxy-shared-dev' \
+        "overlays/${INSTALLER_KUSTOMIZE_OVERLAY}/kustomization.yaml" 2>/dev/null; then
+      CONSOLE_PROXY_NS="osac"
+    else
+      CONSOLE_PROXY_NS="${INSTALLER_NAMESPACE}"
+    fi
+    wait_for_resource deployment/osac-console-proxy condition=Available 300 "${CONSOLE_PROXY_NS}"
+fi
 
 # Wait for AAP bootstrap job to complete.
 # In kustomize mode, the job is named "aap-bootstrap".

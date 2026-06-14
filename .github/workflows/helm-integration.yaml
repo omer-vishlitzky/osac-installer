@@ -44,7 +44,7 @@ jobs:
       run: helm lint charts/osac/
 
     - name: Template chart (dry-run validation)
-      run: helm template osac charts/osac/ --values values/development.yaml > /dev/null
+      run: helm template osac charts/osac/ --values values/development/values.yaml > /dev/null
 
     - name: Deploy umbrella chart
       continue-on-error: true
@@ -52,7 +52,7 @@ jobs:
         helm install osac charts/osac/ \
           --namespace osac \
           --create-namespace \
-          --values values/development.yaml \
+          --values values/development/values.yaml \
           --set validation.enabled=false \
           --set aap.bootstrap.enabled=false \
           --set aap.aap.instance.enabled=false \
@@ -77,7 +77,7 @@ jobs:
       run: |
         helm upgrade osac charts/osac/ \
           --namespace osac \
-          --values values/development.yaml \
+          --values values/development/values.yaml \
           --set validation.enabled=false \
           --set aap.bootstrap.enabled=false \
           --set aap.aap.instance.enabled=false \

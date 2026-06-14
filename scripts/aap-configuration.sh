@@ -8,12 +8,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib.sh"
 
 INSTALLER_KUSTOMIZE_OVERLAY=${INSTALLER_KUSTOMIZE_OVERLAY:-"development"}
-INSTALLER_NAMESPACE=${INSTALLER_NAMESPACE:-$(grep "^namespace:" "overlays/${INSTALLER_KUSTOMIZE_OVERLAY}/kustomization.yaml" | awk '{print $2}')}
-[[ -z "${INSTALLER_NAMESPACE}" ]] && echo "ERROR: Could not determine namespace from overlays/${INSTALLER_KUSTOMIZE_OVERLAY}/kustomization.yaml" && exit 1
+if [[ -z "${INSTALLER_NAMESPACE:-}" ]]; then
+    INSTALLER_NAMESPACE=$(grep "^namespace:" "overlays/${INSTALLER_KUSTOMIZE_OVERLAY}/kustomization.yaml" | awk '{print $2}')
+    [[ -z "${INSTALLER_NAMESPACE}" ]] && echo "ERROR: INSTALLER_NAMESPACE not set and could not determine from overlay" && exit 1
+fi
 
-OVERLAY_FILES="overlays/${INSTALLER_KUSTOMIZE_OVERLAY}/files"
-CONFIG_FILE="${OVERLAY_FILES}/osac-aap-configuration.env"
-SECRETS_FILE="${OVERLAY_FILES}/osac-aap-secrets.env"
+AAP_FILES_DIR="${AAP_FILES_DIR:-overlays/${INSTALLER_KUSTOMIZE_OVERLAY}/files}"
+CONFIG_FILE="${AAP_FILES_DIR}/osac-aap-configuration.env"
+SECRETS_FILE="${AAP_FILES_DIR}/osac-aap-secrets.env"
 
 # Source env files. Shell environment variables take precedence (set -a exports
 # only new variables; existing ones are not overwritten by source).
@@ -105,7 +107,7 @@ done
 for entry in "${SSH_KEY_FILES[@]}"; do
     var="${entry%%=*}"
     filename="${entry#*=}"
-    filepath="${OVERLAY_FILES}/${filename}"
+    filepath="${AAP_FILES_DIR}/${filename}"
     if [[ -f "${filepath}" ]]; then
         encoded=$(base64 < "${filepath}" | tr -d '\n')
         [[ "${has_secret_overrides}" == "true" ]] && secret_patch+=","

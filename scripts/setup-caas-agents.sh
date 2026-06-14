@@ -159,6 +159,7 @@ virt-install \
   --network network=${LIBVIRT_NETWORK} \
   --os-variant rhel9.0 \
   --boot hd,cdrom \
+  --xml ./on_poweroff=restart \
   --noautoconsole
 
 echo "Agent VM created and booting"

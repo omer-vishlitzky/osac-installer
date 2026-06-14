@@ -614,14 +614,14 @@ git submodule update --init --recursive
 
 | Profile | Values File | Operator Controllers | Notes |
 |---------|-------------|---------------------|-------|
-| Development (all) | `values/development.yaml` | clusterOrder, computeInstance, tenant, networking | All controllers, `latest` images |
-| CaaS CI | `values/caas-ci.yaml` | clusterOrder, tenant, networking | Cluster provisioning only, pinned images |
-| VMaaS CI | `values/vmaas-ci.yaml` | computeInstance, tenant, networking | VM provisioning only, pinned images |
+| Development (all) | `values/development/values.yaml` | clusterOrder, computeInstance, tenant, networking | All controllers, `latest` images |
+| CaaS CI | `values/caas-ci/values.yaml` | clusterOrder, tenant, networking | Cluster provisioning only, pinned images |
+| VMaaS CI | `values/vmaas-ci/values.yaml` | computeInstance, tenant, networking | VM provisioning only, pinned images |
 
 To customize, copy and edit:
 
 ```bash
-cp values/development.yaml values/my-env.yaml
+cp values/development/values.yaml values/my-env.yaml
 ```
 
 Key settings to review in your values file:
@@ -649,7 +649,7 @@ helm lint charts/osac/
 # Dry-run render
 helm template osac charts/osac/ \
   --namespace ${NAMESPACE} \
-  --values values/development.yaml > /dev/null
+  --values values/development/values.yaml > /dev/null
 ```
 
 ### 3.4 Deploy
@@ -658,7 +658,7 @@ helm template osac charts/osac/ \
 helm upgrade --install osac charts/osac/ \
   --namespace ${NAMESPACE} \
   --create-namespace \
-  --values values/development.yaml \
+  --values values/development/values.yaml \
   --timeout 40m \
   --wait
 ```
@@ -801,7 +801,7 @@ export NAMESPACE=osac
 # Phase 3: Deploy
 helm upgrade --install osac charts/osac/ \
   --namespace ${NAMESPACE} --create-namespace \
-  --values values/vmaas-ci.yaml \
+  --values values/vmaas-ci/values.yaml \
   --timeout 40m --wait
 # Phase 4: Post-install scripts
 ```
@@ -819,7 +819,7 @@ export NAMESPACE=osac
 # Phase 3: Deploy
 helm upgrade --install osac charts/osac/ \
   --namespace ${NAMESPACE} --create-namespace \
-  --values values/caas-ci.yaml \
+  --values values/caas-ci/values.yaml \
   --timeout 40m --wait
 # Phase 4: Post-install scripts
 ```
@@ -836,7 +836,7 @@ export NAMESPACE=osac
 # Phase 3: Deploy
 helm upgrade --install osac charts/osac/ \
   --namespace ${NAMESPACE} --create-namespace \
-  --values values/development.yaml \
+  --values values/development/values.yaml \
   --timeout 40m --wait
 # Phase 4: Post-install scripts
 ```
@@ -852,19 +852,19 @@ automatically:
 # VMaaS + CaaS with all optional services
 EXTRA_SERVICES=true \
 INSTALLER_NAMESPACE=osac \
-VALUES_FILE=values/development.yaml \
+VALUES_FILE=values/development/values.yaml \
   ./scripts/setup.sh
 
 # VMaaS only
 VIRT_SERVICE=true \
 INSTALLER_NAMESPACE=osac \
-VALUES_FILE=values/vmaas-ci.yaml \
+VALUES_FILE=values/vmaas-ci/values.yaml \
   ./scripts/setup.sh
 
 # CaaS only
 MCE_SERVICE=true \
 INSTALLER_NAMESPACE=osac \
-VALUES_FILE=values/caas-ci.yaml \
+VALUES_FILE=values/caas-ci/values.yaml \
   ./scripts/setup.sh
 ```
 
@@ -877,7 +877,7 @@ and you need to impersonate a different user, set `OC_IMPERSONATE`:
 ```bash
 OC_IMPERSONATE=developer@example.com \
 INSTALLER_NAMESPACE=my-osac \
-VALUES_FILE=values/development.yaml \
+VALUES_FILE=values/development/values.yaml \
   ./scripts/setup.sh
 ```
 
@@ -981,7 +981,7 @@ oc logs job/osac-db-migrate -n ${NAMESPACE}
 oc delete job osac-db-migrate -n ${NAMESPACE}
 helm upgrade --install osac charts/osac/ \
   --namespace ${NAMESPACE} \
-  --values values/development.yaml \
+  --values values/development/values.yaml \
   --timeout 40m \
   --wait
 ```

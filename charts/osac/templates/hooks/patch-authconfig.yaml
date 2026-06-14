@@ -1,0 +1,64 @@
+{{/*
+TODO: Remove once the fulfillment-service subchart supports configuring
+additional emergency service accounts via values. Currently the AuthConfig
+Rego only includes "admin" — the template-publisher and osac-operator SAs
+also need emergency admin access for publish-templates and gRPC sync.
+
+This hook runs at weight 5, BEFORE the AAP bootstrap hook (weight 10),
+so the AuthConfig is patched before publish-templates runs.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: osac-patch-authconfig
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "osac.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "osac.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: osac-aap-sa
+      containers:
+      - name: patch
+        image: {{ .Values.validation.image }}
+        command:
+        - /bin/bash
+        - -ce
+        - |
+          NS="{{ .Release.Namespace }}"
+          EXTRA_SAS="template-publisher osac-operator"
+
+          echo "Waiting for AuthConfig to exist..."
+          until kubectl get authconfig fulfillment-service -n "${NS}" &>/dev/null; do
+            sleep 5
+          done
+
+          REGO=$(kubectl get authconfig fulfillment-service -n "${NS}" \
+              -o jsonpath='{.spec.authorization.default.opa.rego}')
+
+          CHANGED=false
+          for SA in ${EXTRA_SAS}; do
+              FULL="system:serviceaccount:${NS}:${SA}"
+              if ! echo "${REGO}" | grep -qF "${FULL}"; then
+                  REGO=$(echo "${REGO}" | sed "s|\"system:serviceaccount:${NS}:admin\",|\"system:serviceaccount:${NS}:admin\",\n  \"${FULL}\",|")
+                  CHANGED=true
+                  echo "Adding ${FULL}"
+              fi
+          done
+
+          if [ "${CHANGED}" = "true" ]; then
+              kubectl patch authconfig fulfillment-service -n "${NS}" --type=merge \
+                  -p "{\"spec\":{\"authorization\":{\"default\":{\"opa\":{\"rego\":$(echo "${REGO}" | jq -Rs .)}}}}}"
+              echo "AuthConfig updated"
+          else
+              echo "AuthConfig already has all emergency SAs"
+          fi
