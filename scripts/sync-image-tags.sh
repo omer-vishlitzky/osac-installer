@@ -80,6 +80,20 @@ for values_file in "${REPO_ROOT}"/values/*/values.yaml; do
   name=$(basename "$(dirname "${values_file}")")
   grep -q "sha-" "${values_file}" || continue
 
+  # Sync projectGitBranch (full 40-char commit, not an image tag)
+  current_branch=$(grep "projectGitBranch:" "${values_file}" | awk '{print $2}' | tr -d '"')
+  if [[ -n "${current_branch}" ]]; then
+    if [[ "${current_branch}" == "${aap_commit}" ]]; then
+      echo "${name} projectGitBranch: OK"
+    elif [[ "${1:-}" == "--fix" ]]; then
+      sed -i "s|projectGitBranch:.*|projectGitBranch: \"${aap_commit}\"|" "${values_file}"
+      echo "${name} projectGitBranch: FIXED ${current_branch} -> ${aap_commit}"
+    else
+      echo "${name} projectGitBranch: MISMATCH current=${current_branch} expected=${aap_commit}"
+      errors=$((errors + 1))
+    fi
+  fi
+
   for pair in \
     "osac-operator:tag ${operator_tag}" \
     "fulfillment-service:inline ${fulfillment_tag}" \

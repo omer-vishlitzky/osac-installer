@@ -49,10 +49,29 @@ class RefreshConfig:
 
 
 def run(args: list[str], *, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        args, check=check, text=True,
-        capture_output=capture, cwd=str(REPO_ROOT),
+    """Run a command. Always captures output so errors include full context.
+
+    When capture=False (default), output is printed to stderr in real time AND
+    stored in the result. When capture=True, output is only stored (for parsing).
+    On failure, CalledProcessError always contains stdout+stderr.
+    """
+    result = subprocess.run(
+        args, text=True, capture_output=True, cwd=str(REPO_ROOT),
     )
+    if not capture:
+        if result.stdout:
+            sys.stderr.write(result.stdout)
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+    if check and result.returncode != 0:
+        print(f"ERROR: command failed (exit {result.returncode}): {' '.join(args)}", file=sys.stderr)
+        if result.stdout:
+            print(f"  stdout: {result.stdout.rstrip()}", file=sys.stderr)
+        if result.stderr:
+            print(f"  stderr: {result.stderr.rstrip()}", file=sys.stderr)
+        raise subprocess.CalledProcessError(
+            result.returncode, args, output=result.stdout, stderr=result.stderr)
+    return result
 
 
 def oc(*args: str, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess[str]:
@@ -80,16 +99,23 @@ def oc_exists(resource: str, namespace: str | None = None) -> bool:
 
 def oc_apply_secret(name: str, namespace: str, *literal_or_file_args: str) -> None:
     """Create a secret with --dry-run=client and pipe to oc apply."""
-    result = subprocess.run(
+    result = run(
         ["oc", "create", "secret", "generic", name,
          *literal_or_file_args,
          "-n", namespace, "--dry-run=client", "-o", "yaml"],
-        capture_output=True, text=True, check=True, cwd=str(REPO_ROOT),
+        capture=True,
     )
-    subprocess.run(
+    apply_result = subprocess.run(
         ["oc", "apply", "-f", "-"],
-        input=result.stdout, text=True, check=True, cwd=str(REPO_ROOT),
+        input=result.stdout, text=True, capture_output=True, cwd=str(REPO_ROOT),
     )
+    if apply_result.returncode != 0:
+        print(f"ERROR: oc apply secret/{name} failed", file=sys.stderr)
+        if apply_result.stderr:
+            print(f"  stderr: {apply_result.stderr.rstrip()}", file=sys.stderr)
+        raise subprocess.CalledProcessError(
+            apply_result.returncode, ["oc", "apply", "-f", "-"],
+            output=apply_result.stdout, stderr=apply_result.stderr)
 
 
 # ─── Parallel execution ─────────────────────────────────────────────────────
@@ -233,11 +259,11 @@ def keycloak_sync(config: RefreshConfig) -> None:
         ).stdout.strip() == "200",
     )
 
-    token_resp = subprocess.run(
+    token_resp = run(
         ["curl", "-sk", f"{kc_url}/realms/master/protocol/openid-connect/token",
          "-d", "client_id=admin-cli", "-d", "username=admin",
          "-d", "password=admin", "-d", "grant_type=password"],
-        capture_output=True, text=True, check=True,
+        capture=True,
     )
     token_data = json.loads(token_resp.stdout)
     kc_token = token_data.get("access_token", "")
@@ -310,13 +336,6 @@ def create_secrets(config: RefreshConfig) -> None:
     oc_apply_secret("fulfillment-controller-credentials", config.namespace,
                     f"--from-literal=client-id={fc_id}",
                     f"--from-literal=client-secret={fc_secret}")
-
-    aap_commit = run(["git", "submodule", "status", "base/osac-aap"],
-                     capture=True).stdout.split()[0].strip(" +-")
-    oc_apply_secret("config-as-code-ig", config.namespace,
-                    f"--from-literal=AAP_EE_IMAGE=ghcr.io/osac-project/osac-aap:sha-{aap_commit[:7]}",
-                    "--from-literal=AAP_PROJECT_GIT_URI=https://github.com/osac-project/osac-aap",
-                    f"--from-literal=AAP_PROJECT_GIT_BRANCH={aap_commit}")
 
     license_path = Path(config.values_dir) / "license.zip"
     if not license_path.exists():
@@ -423,35 +442,58 @@ def wait_fulfillment(config: RefreshConfig) -> None:
     print("  Fulfillment + operator running")
 
 
+def _aap_controller_reconciled(config: RefreshConfig, stale_ts: str) -> bool:
+    result = oc(
+        "get", "automationcontroller", "osac-aap-controller",
+        "-n", config.namespace,
+        "-o", "jsonpath="
+              "{.status.conditions[?(@.type==\"Running\")].status}"
+              " "
+              "{.status.conditions[?(@.type==\"Successful\")].lastTransitionTime}",
+        capture=True, check=False,
+    ).stdout.strip().split()
+    if len(result) != 2:
+        return False
+    running, current_ts = result
+    return running == "True" and current_ts != stale_ts
+
+
 def start_aap(config: RefreshConfig) -> None:
     print("  Scaling AAP operators to 1...")
+    stale_ts = oc(
+        "get", "automationcontroller", "osac-aap-controller",
+        "-n", config.namespace,
+        "-o", 'jsonpath={.status.conditions[?(@.type=="Successful")].lastTransitionTime}',
+        capture=True, check=False,
+    ).stdout.strip()
     csv = find_csv(namespace="ansible-aap",
                    deploy_name="automation-controller-operator-controller-manager")
     scale_csv_to(csv_name=csv, namespace="ansible-aap", replicas=1)
 
     print("  Waiting for AAP controller...")
     retry_until(
-        description="AAP controller Running",
+        description="AAP controller reconciliation",
         timeout=600, interval=10,
-        condition=lambda: oc(
-            "get", "automationcontroller", "osac-aap-controller",
-            "-n", config.namespace,
-            "-o", "jsonpath={.status.conditions[?(@.type==\"Running\")].status}",
-            capture=True, check=False,
-        ).stdout.strip() == "True",
+        condition=lambda: _aap_controller_reconciled(config, stale_ts),
     )
 
     aap_host = oc("get", "route", "osac-aap", "-n", config.namespace,
                   "-o", "jsonpath={.spec.host}", capture=True).stdout.strip()
-    retry_until(
-        description="AAP gateway responding",
-        timeout=300, interval=10,
-        condition=lambda: subprocess.run(
-            ["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}",
-             f"https://{aap_host}/api/gateway/v1/"],
-            capture_output=True, text=True, check=False,
-        ).stdout.strip() == "200",
-    )
+    run_parallel([
+        ("AAP gateway responding", lambda: retry_until(
+            description="AAP gateway responding",
+            timeout=600, interval=10,
+            condition=lambda: subprocess.run(
+                ["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}",
+                 f"https://{aap_host}/api/gateway/v1/"],
+                capture_output=True, text=True, check=False,
+            ).stdout.strip() == "200",
+        )),
+        ("AAP controller-task rollout", lambda: oc(
+            "rollout", "status", "deploy/osac-aap-controller-task",
+            "-n", config.namespace, "--timeout=600s",
+        )),
+    ])
     print("  AAP running")
 
 
@@ -470,26 +512,20 @@ def fix_assisted_service() -> None:
 def post_flight(config: RefreshConfig) -> None:
     oc("config", "set-context", "--current", f"--namespace={config.namespace}")
 
-    env = os.environ.copy()
-    env["INSTALLER_NAMESPACE"] = config.namespace
+    # Set env vars for sub-scripts (they read from environment)
+    os.environ["INSTALLER_NAMESPACE"] = config.namespace
+    if config.vm_template:
+        os.environ["INSTALLER_VM_TEMPLATE"] = config.vm_template
+    if config.cluster_template:
+        os.environ["INSTALLER_CLUSTER_TEMPLATE"] = config.cluster_template
 
     print("  Running prepare-aap.sh...")
-    subprocess.run(
-        [str(SCRIPT_DIR / "prepare-aap.sh")],
-        check=True, env=env, cwd=str(REPO_ROOT),
-    )
+    run([str(SCRIPT_DIR / "prepare-aap.sh")])
 
     # publish-templates must run because the fulfillment database is recreated
     # on every refresh (bare Pod with emptyDir — data lost on scale-to-zero).
-    if config.vm_template:
-        env["INSTALLER_VM_TEMPLATE"] = config.vm_template
-    if config.cluster_template:
-        env["INSTALLER_CLUSTER_TEMPLATE"] = config.cluster_template
     print("  Running prepare-fulfillment-service.sh...")
-    subprocess.run(
-        [str(SCRIPT_DIR / "prepare-fulfillment-service.sh")],
-        check=True, env=env, cwd=str(REPO_ROOT),
-    )
+    run([str(SCRIPT_DIR / "prepare-fulfillment-service.sh")])
 
     print("  Waiting for fulfillment rollouts...")
     deploys = oc_json("get", "deploy", "-n", config.namespace,
@@ -499,10 +535,11 @@ def post_flight(config: RefreshConfig) -> None:
         oc("rollout", "status", f"deploy/{name}", "-n", config.namespace, "--timeout=300s")
 
     print("  Running prepare-tenant.sh...")
-    subprocess.run(
-        [str(SCRIPT_DIR / "prepare-tenant.sh")],
-        check=True, env=env, cwd=str(REPO_ROOT),
-    )
+    run([str(SCRIPT_DIR / "prepare-tenant.sh")])
+
+    # Clean up env vars we set (don't leak to caller)
+    for key in ["INSTALLER_NAMESPACE", "INSTALLER_VM_TEMPLATE", "INSTALLER_CLUSTER_TEMPLATE"]:
+        os.environ.pop(key, None)
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────

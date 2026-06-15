@@ -129,6 +129,7 @@ timeout -s 9 10m ssh -F "${SSH_CONFIG}" ci_machine bash -s <<SSHEOF
 set -euo pipefail
 
 dnf install -y virt-install
+virt-install --version
 
 mkdir -p ${AGENT_VM_STORAGE_DIR}
 
@@ -142,7 +143,7 @@ done
 [[ "\${HTTP_CODE}" != "200" ]] && { echo "ERROR: assisted-image-service not ready after 30 attempts (last HTTP \${HTTP_CODE})"; exit 1; }
 
 echo "Downloading discovery ISO..."
-curl -k -L --fail-with-body -o ${AGENT_VM_STORAGE_DIR}/discovery.iso '${ISO_URL}'
+curl -k -L --fail-with-body -o ${AGENT_VM_STORAGE_DIR}/${AGENT_VM_NAME}-discovery.iso '${ISO_URL}'
 
 virsh destroy ${AGENT_VM_NAME} 2>/dev/null || true
 virsh undefine ${AGENT_VM_NAME} 2>/dev/null || true
@@ -155,11 +156,11 @@ virt-install \
   --memory ${AGENT_VM_MEMORY} \
   --vcpus ${AGENT_VM_VCPUS} \
   --disk ${AGENT_VM_STORAGE_DIR}/${AGENT_VM_NAME}.qcow2 \
-  --cdrom ${AGENT_VM_STORAGE_DIR}/discovery.iso \
+  --disk ${AGENT_VM_STORAGE_DIR}/${AGENT_VM_NAME}-discovery.iso,device=cdrom,readonly=on \
   --network network=${LIBVIRT_NETWORK} \
   --os-variant rhel9.0 \
   --boot hd,cdrom \
-  --xml ./on_poweroff=restart \
+  --events on_poweroff=restart,on_reboot=restart \
   --noautoconsole
 
 echo "Agent VM created and booting"
