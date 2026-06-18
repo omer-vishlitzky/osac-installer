@@ -424,10 +424,14 @@ def upgrade_fulfillment_db(config: RefreshConfig) -> None:
 
 def upgrade_osac(config: RefreshConfig) -> None:
     print("  Upgrading osac chart...")
+    oc("delete", "secret", "config-as-code-ig", "-n", config.namespace,
+       "--ignore-not-found")
+    base_domain = "hosted." + config.cluster_domain.removeprefix("apps.")
     run(["helm", "upgrade", "osac", "charts/osac/",
          "--namespace", config.namespace,
          "--values", config.values_file,
          "--set", "aap.bootstrap.enabled=false",
+         "--set", f"clusterFulfillment.config.HOSTED_CLUSTER_BASE_DOMAIN={base_domain}",
          "--timeout", "15m"])
 
 

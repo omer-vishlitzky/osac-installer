@@ -88,7 +88,7 @@ aap:
     secret: "config-as-code-ig"
     eeImage: "ghcr.io/osac-project/osac-aap:sha-3453b54"
     projectGitUri: "https://github.com/omer-vishlitzky/osac-aap"
-    projectGitBranch: "2d91fddaee9bcbc41532b8c4e787367673436bb5"
+    projectGitBranch: "654a6c0963e4e01623cf03394304cff9ed9b590a"
 
 # --- Instance Groups ---
 instanceGroups:

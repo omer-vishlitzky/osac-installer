@@ -27,6 +27,7 @@ echo "Resource class: ${AGENT_RESOURCE_CLASS}"
 echo ""
 
 NODE_IP=$(oc get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+NODE_NAME=$(oc get nodes -o jsonpath='{.items[0].metadata.name}')
 CLUSTER_DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')
 echo "Node IP: ${NODE_IP}"
 echo "Cluster domain: ${CLUSTER_DOMAIN}"
@@ -44,6 +45,13 @@ spec:
   autoAssign: true
 METALLBEOF
 echo "MetalLB IPAddressPool configured for ${SUBNET_PREFIX}.240-${SUBNET_PREFIX}.250"
+
+# Enable IP forwarding on the SNO's primary NIC so MetalLB VIP traffic from
+# the agent VM can be forwarded to the pod network. OVN-K disables forwarding
+# on ens2 (OCP 4.14+ security hardening), but the agent VM needs it to reach
+# the HostedCluster's kube-apiserver LoadBalancer VIP.
+oc debug "node/${NODE_NAME}" -- chroot /host sysctl -w net.ipv4.conf.ens2.forwarding=1
+echo "Enabled ens2.forwarding=1 on ${NODE_NAME}"
 
 echo "[1/6] Registering '${AGENT_RESOURCE_CLASS}' host type in fulfillment service..."
 INTERNAL_API="https://$(oc get route fulfillment-internal-api -n "${INSTALLER_NAMESPACE}" -o jsonpath='{.status.ingress[0].host}')"
@@ -107,21 +115,36 @@ retry_until 300 5 '[[ -n "$(oc get infraenv ${AGENT_NAMESPACE} -n ${AGENT_NAMESP
 ISO_URL=$(oc get infraenv "${AGENT_NAMESPACE}" -n "${AGENT_NAMESPACE}" -o jsonpath='{.status.isoDownloadURL}')
 echo "ISO URL: ${ISO_URL}"
 
-echo "[4/6] Configuring host DNS for ISO download..."
+echo "[4/6] Configuring host DNS for ISO download and HostedCluster resolution..."
 timeout -s 9 2m ssh -F "${SSH_CONFIG}" ci_machine bash -s \
     "${NODE_IP}" \
     "${CLUSTER_DOMAIN}" \
+    "${LIBVIRT_NETWORK}" \
     <<'DNSEOF'
 set -euo pipefail
 NODE_IP="$1"
 CLUSTER_DOMAIN="$2"
+LIBVIRT_NETWORK="$3"
+BASE_DOMAIN="${CLUSTER_DOMAIN#apps.}"
+HC_DOMAIN="hosted.${BASE_DOMAIN}"
 
-# The host needs to resolve *.apps for the ISO download (curl runs on host).
-# VMs resolve via the libvirt network's dnsmasq wildcard (set by cluster-tool).
 SLUG=$(echo "${CLUSTER_DOMAIN}" | sed 's/[^a-zA-Z0-9]/-/g')
-echo "address=/.${CLUSTER_DOMAIN}/${NODE_IP}" > "/etc/dnsmasq.d/${SLUG}.conf"
+{
+  echo "address=/.${CLUSTER_DOMAIN}/${NODE_IP}"
+} > "/etc/dnsmasq.d/${SLUG}.conf"
 systemctl restart dnsmasq
 echo "  *.${CLUSTER_DOMAIN} -> ${NODE_IP}"
+
+# Libvirt network dnsmasq: agent VMs resolve via this. The libvirt dnsmasq has
+# local=/<base-domain>/ which answers subdomains locally without forwarding.
+# We add a wildcard for hosted.<base-domain> so agents can resolve HostedCluster
+# domains (api.order-xyz.hosted.<base-domain>). Using the "hosted." subdomain
+# avoids ndots:5 poisoning — pods have <base-domain> in their search path, so
+# a bare wildcard on <base-domain> would catch quay.io.<base-domain> etc.
+CONF="/var/lib/libvirt/dnsmasq/${LIBVIRT_NETWORK}.conf"
+PID_FILE="/run/libvirt/network/${LIBVIRT_NETWORK}.pid"
+# hosted domain DNS is added after agent registration (step 6) with the
+# agent VM's IP, so ingress routes reach the HC's own router.
 DNSEOF
 
 echo "[5/6] Creating agent VM..."
@@ -179,6 +202,35 @@ echo "Agent registered: ${AGENT_NAME}"
 
 oc label agent/"${AGENT_NAME}" -n "${AGENT_NAMESPACE}" "osac.openshift.io/resource_class=${AGENT_RESOURCE_CLASS}" --overwrite
 oc patch agent/"${AGENT_NAME}" -n "${AGENT_NAMESPACE}" --type=merge -p '{"spec":{"approved":true}}'
+
+# Get the agent VM's IP and add DNS for the hosted domain pointing to it.
+# The HC's ingress controller runs in HostNetwork mode on the agent VM, so
+# *.hosted.<domain> (including *.apps.<order>.hosted.<domain>) must resolve
+# to the agent VM — NOT the management cluster.
+AGENT_VM_IP=$(timeout -s 9 30s ssh -F "${SSH_CONFIG}" ci_machine \
+    "virsh domifaddr ${AGENT_VM_NAME} 2>/dev/null | grep vnet | awk '{print \$4}' | cut -d/ -f1")
+[[ -z "${AGENT_VM_IP}" ]] && { echo "ERROR: Could not determine agent VM IP"; exit 1; }
+echo "Agent VM IP: ${AGENT_VM_IP}"
+
+BASE_DOMAIN="${CLUSTER_DOMAIN#apps.}"
+HC_DOMAIN="hosted.${BASE_DOMAIN}"
+
+timeout -s 9 30s ssh -F "${SSH_CONFIG}" ci_machine bash -s \
+    "${AGENT_VM_IP}" \
+    "${HC_DOMAIN}" \
+    "${CLUSTER_DOMAIN}" \
+    <<'DNSEOF2'
+set -euo pipefail
+AGENT_VM_IP="$1"
+HC_DOMAIN="$2"
+CLUSTER_DOMAIN="$3"
+SLUG=$(echo "${CLUSTER_DOMAIN}" | sed 's/[^a-zA-Z0-9]/-/g')
+
+# Add hosted domain → agent VM IP to host dnsmasq
+echo "address=/.${HC_DOMAIN}/${AGENT_VM_IP}" >> "/etc/dnsmasq.d/${SLUG}.conf"
+systemctl restart dnsmasq
+echo "  *.${HC_DOMAIN} -> ${AGENT_VM_IP}"
+DNSEOF2
 
 echo ""
 echo "=== CaaS agent setup complete ==="
