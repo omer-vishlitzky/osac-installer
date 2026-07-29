@@ -24,25 +24,4 @@ until oc wait kafka/osac-kafka -n osac-kafka --for=condition=Ready --timeout=600
   sleep 15
 done
 
-echo "Applying Kafka topics..."
-oc apply -f /config/kafka-topics.yaml
-
-echo "Waiting for Kafka topics to be ready..."
-for topic in osac.metering.lifecycle osac.metering.heartbeat osac.metering.inference osac.metering.corrections osac.metering.dlq; do
-  until oc wait "kafkatopic/${topic}" -n osac-kafka --for=condition=Ready --timeout=120s 2>/dev/null; do
-    echo "Topic ${topic} not yet ready, retrying..."
-    sleep 5
-  done
-  echo "Topic ${topic} ready."
-done
-
-echo "Applying Kafka user..."
-oc apply -f /config/kafka-user.yaml
-
-echo "Waiting for Kafka user to be ready..."
-until oc wait kafkauser/osac-metering -n osac-kafka --for=condition=Ready --timeout=120s 2>/dev/null; do
-  echo "Kafka user not yet ready, retrying..."
-  sleep 5
-done
-
 echo "Kafka configuration complete."

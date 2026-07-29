@@ -46,6 +46,3 @@ kafka:
     size: 100Gi
   version: "4.2.0"
   metadataVersion: "4.2-IV0"
-  retention:
-    standardDays: 30
-    dlqDays: 90
