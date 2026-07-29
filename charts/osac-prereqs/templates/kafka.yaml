@@ -149,14 +149,6 @@ data:
               patternType: prefix
             operations:
               - Write
-              - Read
               - Describe
-            host: "*"
-          - resource:
-              type: group
-              name: osac-metering
-              patternType: prefix
-            operations:
-              - Read
             host: "*"
 {{- end }}
